@@ -457,6 +457,8 @@ private:
         // Used only when time_sync_mode == TimeSyncMode_GPS
         AP_Int32 start_time_gps_sec;
 
+        AP_Int32 count_msec;
+
         // Latitude of drone show coordinate system, in 1e-7 degrees, as set in the parameters by the user
         AP_Int32 origin_lat;
 

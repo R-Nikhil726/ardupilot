@@ -288,7 +288,17 @@ const AP_Param::GroupInfo AC_DroneShowManager::var_info[] = {
     // @RebootRequired: True
     AP_GROUPINFO("SYNC_MODE", 18, AC_DroneShowManager, _params.time_sync_mode, DEFAULT_SYNC_MODE),
 
-    // Currently used max parameter ID: 19; update this if you add more parameters.
+    // @Param: COUNT_MSEC
+    // @DisplayName: Countdown mode timing
+    // @Description: countdown  synchronization mode 
+    // @Range: -1 604799
+    // @Increment: 1
+    // @Units: msec
+    // @User: Advanced
+    // @RebootRequired: True
+    AP_GROUPINFO("COUNT_MSEC", 20, AC_DroneShowManager, _params.count_msec, -1),
+
+    // Currently used max parameter ID: 20; update this if you add more parameters.
 
     AP_GROUPEND
 };
@@ -1083,30 +1093,18 @@ bool AC_DroneShowManager::schedule_delayed_start_after(uint32_t delay_ms)
 
     _cancel_requested = false;
 
-    if (_stage_in_drone_show_mode != DroneShow_WaitForStartTime)
-    {
-        // We are not in the "wait for start time" phase so we ignore the request
-        return false;
-    }
-
-    if (uses_gps_time_for_show_start()) {
-        if (_is_gps_time_ok()) {
-            // We are modifying a parameter directly here without notifying the
-            // param subsystem, but this is okay -- we do not want to save the
-            // start time into the EEPROM, and it is reset at the next boot anyway.
-            // Delay is rounded down to integer seconds.
-            _params.start_time_gps_sec = ((AP::gps().time_week_ms() + delay_ms) / 1000) % GPS_WEEK_LENGTH_SEC;
+    if (_stage_in_drone_show_mode == DroneShow_WaitForStartTime || _stage_in_drone_show_mode == DroneShow_Landed) {
+        if (!uses_gps_time_for_show_start()) {
+            gcs().send_text(MAV_SEVERITY_ALERT,"start time  update");
+            _start_time_on_internal_clock_usec = AP_HAL::micros64() + (delay_ms * 1000);
             success = true;
         }
-    } else {
-        _start_time_on_internal_clock_usec = AP_HAL::micros64() + (delay_ms * 1000);
-        success = true;
-    }
 
-    if (success) {
-        _start_time_requested_by = StartTimeSource::START_METHOD;
-    }
+        if (success){
+            _start_time_requested_by = StartTimeSource::START_METHOD;
+        }
 
+    }
     return success;
 }
 
@@ -1147,6 +1145,7 @@ void AC_DroneShowManager::_check_changes_in_parameters()
     static int32_t last_seen_origin_amsl_mm = -200000000;  // intentionally invalid
     static float last_seen_orientation_deg = INFINITY;      // intentionally invalid
     uint32_t start_time_gps_msec;
+    static int32_t last_seen_countdown_msec=-1;
 
     bool new_control_rate_pending = _params.control_rate_hz != last_seen_control_rate_hz;    
     bool new_coordinate_system_pending = (
@@ -1157,7 +1156,7 @@ void AC_DroneShowManager::_check_changes_in_parameters()
     );
     bool new_start_time_pending = _params.start_time_gps_sec != last_seen_start_time_gps_sec;
     bool new_show_authorization_pending = _params.authorized_to_start != last_seen_show_authorization_state;
-
+    bool new_countdown_pending=_params.count_msec!=last_seen_countdown_msec;
     if (new_coordinate_system_pending) {
         // We can safely mess around with the coordinate system as we are only
         // updating the _tentative_ coordinate system here, which will take
@@ -1207,6 +1206,15 @@ void AC_DroneShowManager::_check_changes_in_parameters()
         } else {
             _start_time_unix_usec = 0;
             _start_time_requested_by = StartTimeSource::NONE;
+        }
+    }
+
+    if(new_countdown_pending){
+        last_seen_countdown_msec=_params.count_msec;
+        if (_params.count_msec < -GPS_WEEK_LENGTH_MSEC) {
+            clear_scheduled_start_time();
+        } else if (_params.count_msec >= 0 && _params.count_msec < GPS_WEEK_LENGTH_MSEC) {
+            schedule_delayed_start_after(_params.count_msec);
         }
     }
 
